@@ -15,7 +15,7 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
   })
 
   // Build per-student table
-  const studentIds = [...new Set(guesses.map((g) => g.studentId))].sort()
+  const studentIds = Array.from(new Set(guesses.map((g) => g.studentId))).sort()
   const table = studentIds.map((id) => {
     const row: Record<string, string | number> = { id }
     for (const r of rounds) {
