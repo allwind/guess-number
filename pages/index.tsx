@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 
 interface GameState {
   currentRound: number
@@ -12,6 +12,8 @@ export default function StudentPage() {
   const [status, setStatus] = useState<{ type: 'success' | 'error' | ''; msg: string }>({ type: '', msg: '' })
   const [submittedRounds, setSubmittedRounds] = useState<number[]>([])
   const [loading, setLoading] = useState(false)
+  const lastRoundRef = useRef<number | null>(null)
+  const prevRevealedRef = useRef<boolean>(false)
 
   useEffect(() => {
     const savedId = sessionStorage.getItem('studentId') || ''
@@ -26,12 +28,38 @@ export default function StudentPage() {
   async function fetchState() {
     try {
       const res = await fetch('/api/state')
-      const data = await res.json()
-      setState(data)
+      const data: GameState = await res.json()
+
+      setState(prev => {
+        const prevRound = lastRoundRef.current
+        const wasRevealed = prevRevealedRef.current
+
+        // Detect reset: round dropped back to 1 while we had a higher round tracked
+        if (prevRound !== null && data.currentRound === 1 && prevRound > 1) {
+          setSubmittedRounds([])
+          sessionStorage.removeItem('submittedRounds')
+          setStatus({ type: '', msg: '' })
+          setGuess('')
+        }
+
+        // Detect new round: round number increased (host pressed "next")
+        if (prevRound !== null && data.currentRound > prevRound) {
+          setStatus({ type: '', msg: '' })
+          setGuess('')
+          // Update submittedRounds from sessionStorage (stay accurate)
+          const saved = JSON.parse(sessionStorage.getItem('submittedRounds') || '[]')
+          setSubmittedRounds(saved)
+        }
+
+        lastRoundRef.current = data.currentRound
+        prevRevealedRef.current = data.revealed
+        return data
+      })
     } catch {}
   }
 
   const hasSubmittedThisRound = state ? submittedRounds.includes(state.currentRound) : false
+  const canSubmit = !hasSubmittedThisRound && !state?.revealed && !loading
 
   async function handleSubmit() {
     if (!studentId.trim()) return setStatus({ type: 'error', msg: '請輸入學號' })
@@ -51,7 +79,7 @@ export default function StudentPage() {
         const newRounds = [...submittedRounds, state!.currentRound]
         setSubmittedRounds(newRounds)
         sessionStorage.setItem('submittedRounds', JSON.stringify(newRounds))
-        setStatus({ type: 'success', msg: `✓ 已提交：${val}` })
+        setStatus({ type: 'success', msg: `已提交：${val}` })
         setGuess('')
       } else {
         setStatus({ type: 'error', msg: data.error || '提交失敗' })
@@ -64,29 +92,30 @@ export default function StudentPage() {
   }
 
   return (
-    <div style={styles.page}>
-      <div style={styles.container}>
-        {/* Header */}
-        <div style={styles.header}>
-          <div style={styles.label}>CLASSROOM EXPERIMENT</div>
-          <div style={styles.roundBadge}>
-            {state ? `第 ${state.currentRound} 輪` : '載入中…'}
+    <div style={st.page}>
+      <div style={st.container}>
+
+        <div style={st.header}>
+          <div>
+            <div style={st.appName}>課堂猜數字</div>
+            <div style={st.appSub}>Classroom Experiment</div>
+          </div>
+          <div style={st.roundPill}>
+            {state ? `第 ${state.currentRound} 輪` : '…'}
           </div>
         </div>
 
-        {/* Status indicator */}
         {state?.revealed && (
-          <div style={styles.revealedBanner}>
-            ⏸ 本輪已揭曉，等待下一輪開始
+          <div style={{ ...st.banner, background: '#fff7ed', border: '1px solid #fed7aa', color: '#c2410c' }}>
+            ⏸ 本輪已揭曉，請等待下一輪開始
           </div>
         )}
 
-        {/* Form */}
-        <div style={styles.card}>
-          <div style={styles.fieldGroup}>
-            <label style={styles.fieldLabel}>學號</label>
+        <div style={st.card}>
+          <div style={st.fieldGroup}>
+            <label style={st.label}>學號</label>
             <input
-              style={styles.input}
+              style={{ ...st.input, background: hasSubmittedThisRound ? 'var(--surface2)' : '#fff' }}
               type="text"
               placeholder="例：A01"
               value={studentId}
@@ -96,65 +125,67 @@ export default function StudentPage() {
             />
           </div>
 
-          <div style={styles.fieldGroup}>
-            <label style={styles.fieldLabel}>猜測數字 <span style={styles.range}>(0–100)</span></label>
+          <div style={st.fieldGroup}>
+            <label style={st.label}>
+              猜測數字 <span style={st.labelSub}>（0 – 100 整數）</span>
+            </label>
             <input
-              style={styles.input}
+              style={{ ...st.input, fontSize: '26px', background: canSubmit ? '#fff' : 'var(--surface2)' }}
               type="number"
               inputMode="numeric"
-              placeholder="輸入整數"
+              placeholder="0 ~ 100"
               min={0}
               max={100}
               value={guess}
               onChange={(e) => setGuess(e.target.value)}
-              disabled={hasSubmittedThisRound || state?.revealed}
-              onKeyDown={(e) => e.key === 'Enter' && handleSubmit()}
+              disabled={!canSubmit}
+              onKeyDown={(e) => e.key === 'Enter' && canSubmit && handleSubmit()}
             />
           </div>
 
           {status.msg && (
             <div style={{
-              ...styles.statusMsg,
-              background: status.type === 'success' ? 'rgba(71,255,178,0.1)' : 'rgba(255,107,107,0.1)',
+              ...st.statusMsg,
+              background: status.type === 'success' ? 'var(--success-light)' : 'var(--danger-light)',
               color: status.type === 'success' ? 'var(--success)' : 'var(--danger)',
-              border: `1px solid ${status.type === 'success' ? 'rgba(71,255,178,0.3)' : 'rgba(255,107,107,0.3)'}`,
+              border: `1px solid ${status.type === 'success' ? '#bbf7d0' : '#fecaca'}`,
             }}>
-              {status.msg}
+              {status.type === 'success' ? '✓ ' : '✗ '}{status.msg}
             </div>
           )}
 
           <button
             style={{
-              ...styles.btn,
-              opacity: (hasSubmittedThisRound || state?.revealed || loading) ? 0.4 : 1,
-              cursor: (hasSubmittedThisRound || state?.revealed || loading) ? 'not-allowed' : 'pointer',
+              ...st.btn,
+              background: canSubmit ? 'var(--accent)' : '#e5e7eb',
+              color: canSubmit ? '#fff' : '#9ca3af',
+              cursor: canSubmit ? 'pointer' : 'not-allowed',
             }}
             onClick={handleSubmit}
-            disabled={hasSubmittedThisRound || state?.revealed || loading}
+            disabled={!canSubmit}
           >
-            {loading ? '提交中…' : hasSubmittedThisRound ? '已提交 ✓' : '提交猜測'}
+            {loading ? '提交中…' : hasSubmittedThisRound ? '✓ 已提交' : '提交猜測'}
           </button>
         </div>
 
-        {/* History */}
         {submittedRounds.length > 0 && (
-          <div style={styles.historyCard}>
-            <div style={styles.historyTitle}>提交紀錄</div>
+          <div style={st.historyCard}>
+            <span style={st.historyLabel}>已提交：</span>
             {submittedRounds.map(r => (
-              <span key={r} style={styles.roundTag}>第 {r} 輪 ✓</span>
+              <span key={r} style={st.roundTag}>第 {r} 輪 ✓</span>
             ))}
           </div>
         )}
 
-        <div style={styles.footer}>
-          Host? <a href="/host" style={styles.link}>→ 主持人頁面</a>
+        <div style={st.footer}>
+          <a href="/host" style={st.hostLink}>主持人頁面 →</a>
         </div>
       </div>
     </div>
   )
 }
 
-const styles: Record<string, React.CSSProperties> = {
+const st: Record<string, React.CSSProperties> = {
   page: {
     minHeight: '100dvh',
     display: 'flex',
@@ -165,10 +196,10 @@ const styles: Record<string, React.CSSProperties> = {
   },
   container: {
     width: '100%',
-    maxWidth: '420px',
+    maxWidth: '400px',
     display: 'flex',
     flexDirection: 'column',
-    gap: '16px',
+    gap: '14px',
   },
   header: {
     display: 'flex',
@@ -176,68 +207,68 @@ const styles: Record<string, React.CSSProperties> = {
     justifyContent: 'space-between',
     marginBottom: '4px',
   },
-  label: {
-    fontFamily: 'var(--font-mono)',
-    fontSize: '11px',
-    letterSpacing: '0.12em',
-    color: 'var(--muted)',
-    textTransform: 'uppercase',
+  appName: {
+    fontSize: '20px',
+    fontWeight: 700,
+    color: 'var(--text)',
+    letterSpacing: '-0.02em',
   },
-  roundBadge: {
+  appSub: {
+    fontSize: '12px',
+    color: 'var(--muted)',
+    fontFamily: 'var(--font-mono)',
+    marginTop: '2px',
+  },
+  roundPill: {
     fontFamily: 'var(--font-mono)',
     fontSize: '13px',
     fontWeight: 500,
     color: 'var(--accent)',
-    background: 'rgba(232,255,71,0.08)',
-    border: '1px solid rgba(232,255,71,0.25)',
-    padding: '4px 12px',
+    background: 'var(--accent-light)',
+    border: '1px solid #bfdbfe',
+    padding: '5px 14px',
     borderRadius: '20px',
   },
-  revealedBanner: {
-    background: 'rgba(71,200,255,0.08)',
-    border: '1px solid rgba(71,200,255,0.25)',
-    color: 'var(--accent2)',
-    padding: '10px 16px',
-    borderRadius: 'var(--radius)',
+  banner: {
+    padding: '11px 16px',
+    borderRadius: '8px',
     fontSize: '14px',
     textAlign: 'center',
-    fontFamily: 'var(--font-mono)',
+    fontWeight: 500,
   },
   card: {
     background: 'var(--surface)',
     border: '1px solid var(--border)',
     borderRadius: '14px',
-    padding: '24px',
+    padding: '22px',
     display: 'flex',
     flexDirection: 'column',
-    gap: '18px',
+    gap: '16px',
+    boxShadow: 'var(--shadow)',
   },
   fieldGroup: {
     display: 'flex',
     flexDirection: 'column',
-    gap: '8px',
+    gap: '7px',
   },
-  fieldLabel: {
-    fontSize: '12px',
+  label: {
+    fontSize: '13px',
     fontWeight: 600,
-    letterSpacing: '0.06em',
-    color: 'var(--muted)',
-    textTransform: 'uppercase',
-    fontFamily: 'var(--font-mono)',
+    color: 'var(--text)',
   },
-  range: {
+  labelSub: {
     fontWeight: 400,
-    color: '#555',
+    color: 'var(--muted)',
+    fontSize: '12px',
   },
   input: {
-    background: 'var(--surface2)',
-    border: '1px solid var(--border)',
+    border: '1.5px solid var(--border)',
     borderRadius: '8px',
     color: 'var(--text)',
     fontFamily: 'var(--font-mono)',
-    fontSize: '20px',
+    fontSize: '18px',
     fontWeight: 500,
-    padding: '14px 16px',
+    padding: '12px 14px',
     outline: 'none',
     width: '100%',
     transition: 'border-color 0.15s',
@@ -246,58 +277,50 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: '8px',
     padding: '10px 14px',
     fontSize: '14px',
-    fontFamily: 'var(--font-mono)',
+    fontWeight: 500,
   },
   btn: {
-    background: 'var(--accent)',
-    color: '#0d0d0f',
     border: 'none',
     borderRadius: '8px',
-    padding: '15px',
+    padding: '14px',
     fontSize: '15px',
     fontWeight: 700,
     fontFamily: 'var(--font-body)',
-    letterSpacing: '0.02em',
-    cursor: 'pointer',
-    transition: 'transform 0.1s, opacity 0.15s',
+    transition: 'opacity 0.15s',
     width: '100%',
   },
   historyCard: {
     background: 'var(--surface)',
     border: '1px solid var(--border)',
     borderRadius: '10px',
-    padding: '16px',
+    padding: '12px 16px',
     display: 'flex',
     flexWrap: 'wrap' as const,
     gap: '8px',
     alignItems: 'center',
+    boxShadow: 'var(--shadow)',
   },
-  historyTitle: {
-    fontSize: '11px',
-    fontFamily: 'var(--font-mono)',
+  historyLabel: {
+    fontSize: '13px',
     color: 'var(--muted)',
-    textTransform: 'uppercase',
-    letterSpacing: '0.1em',
-    width: '100%',
-    marginBottom: '4px',
+    fontWeight: 500,
   },
   roundTag: {
-    background: 'rgba(71,255,178,0.08)',
-    border: '1px solid rgba(71,255,178,0.2)',
+    background: 'var(--success-light)',
+    border: '1px solid #bbf7d0',
     color: 'var(--success)',
-    padding: '4px 10px',
+    padding: '3px 10px',
     borderRadius: '20px',
     fontSize: '12px',
     fontFamily: 'var(--font-mono)',
+    fontWeight: 600,
   },
   footer: {
     textAlign: 'center',
+    paddingTop: '4px',
+  },
+  hostLink: {
     fontSize: '13px',
     color: 'var(--muted)',
-    paddingTop: '8px',
-  },
-  link: {
-    color: 'var(--accent2)',
-    marginLeft: '4px',
   },
 }
