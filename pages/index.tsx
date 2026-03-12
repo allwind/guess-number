@@ -1,7 +1,10 @@
 import { useState, useEffect, useRef } from 'react'
 
+type CollectStatus = 'idle' | 'collecting' | 'revealed'
+
 interface GameState {
   currentRound: number
+  status: CollectStatus
   revealed: boolean
 }
 
@@ -9,11 +12,10 @@ export default function StudentPage() {
   const [state, setState] = useState<GameState | null>(null)
   const [studentId, setStudentId] = useState('')
   const [guess, setGuess] = useState('')
-  const [status, setStatus] = useState<{ type: 'success' | 'error' | ''; msg: string }>({ type: '', msg: '' })
+  const [statusMsg, setStatusMsg] = useState<{ type: 'success' | 'error' | ''; msg: string }>({ type: '', msg: '' })
   const [submittedRounds, setSubmittedRounds] = useState<number[]>([])
   const [loading, setLoading] = useState(false)
   const lastRoundRef = useRef<number | null>(null)
-  const prevRevealedRef = useRef<boolean>(false)
 
   useEffect(() => {
     const savedId = sessionStorage.getItem('studentId') || ''
@@ -32,39 +34,36 @@ export default function StudentPage() {
 
       setState(prev => {
         const prevRound = lastRoundRef.current
-        const wasRevealed = prevRevealedRef.current
 
-        // Detect reset: round dropped back to 1 while we had a higher round tracked
+        // Reset detected: round dropped back to 1 from higher
         if (prevRound !== null && data.currentRound === 1 && prevRound > 1) {
           setSubmittedRounds([])
           sessionStorage.removeItem('submittedRounds')
-          setStatus({ type: '', msg: '' })
+          setStatusMsg({ type: '', msg: '' })
           setGuess('')
         }
 
-        // Detect new round: round number increased (host pressed "next")
+        // New round started
         if (prevRound !== null && data.currentRound > prevRound) {
-          setStatus({ type: '', msg: '' })
+          setStatusMsg({ type: '', msg: '' })
           setGuess('')
-          // Update submittedRounds from sessionStorage (stay accurate)
           const saved = JSON.parse(sessionStorage.getItem('submittedRounds') || '[]')
           setSubmittedRounds(saved)
         }
 
         lastRoundRef.current = data.currentRound
-        prevRevealedRef.current = data.revealed
         return data
       })
     } catch {}
   }
 
   const hasSubmittedThisRound = state ? submittedRounds.includes(state.currentRound) : false
-  const canSubmit = !hasSubmittedThisRound && !state?.revealed && !loading
+  const canSubmit = !hasSubmittedThisRound && state?.status === 'collecting' && !loading
 
   async function handleSubmit() {
-    if (!studentId.trim()) return setStatus({ type: 'error', msg: '請輸入學號' })
+    if (!studentId.trim()) return setStatusMsg({ type: 'error', msg: '請輸入學號' })
     const val = parseInt(guess)
-    if (isNaN(val) || val < 0 || val > 100) return setStatus({ type: 'error', msg: '請輸入 0–100 的整數' })
+    if (isNaN(val) || !Number.isInteger(val)) return setStatusMsg({ type: 'error', msg: '請輸入整數' })
 
     setLoading(true)
     try {
@@ -79,16 +78,36 @@ export default function StudentPage() {
         const newRounds = [...submittedRounds, state!.currentRound]
         setSubmittedRounds(newRounds)
         sessionStorage.setItem('submittedRounds', JSON.stringify(newRounds))
-        setStatus({ type: 'success', msg: `已提交：${val}` })
+        setStatusMsg({ type: 'success', msg: `已提交：${val}` })
         setGuess('')
       } else {
-        setStatus({ type: 'error', msg: data.error || '提交失敗' })
+        setStatusMsg({ type: 'error', msg: data.error || '提交失敗' })
       }
     } catch {
-      setStatus({ type: 'error', msg: '網路錯誤，請重試' })
+      setStatusMsg({ type: 'error', msg: '網路錯誤，請重試' })
     } finally {
       setLoading(false)
     }
+  }
+
+  // Status banner content
+  function renderBanner() {
+    if (!state) return null
+    if (state.status === 'idle') {
+      return (
+        <div style={{ ...st.banner, background: '#f8fafc', border: '1px solid #e2e8f0', color: '#64748b' }}>
+          ⏳ 等待主持人開始收集…
+        </div>
+      )
+    }
+    if (state.status === 'revealed') {
+      return (
+        <div style={{ ...st.banner, background: '#fff7ed', border: '1px solid #fed7aa', color: '#c2410c' }}>
+          ⏸ 本輪已結束，等待下一輪開始
+        </div>
+      )
+    }
+    return null // collecting — no banner, form is active
   }
 
   return (
@@ -100,16 +119,18 @@ export default function StudentPage() {
             <div style={st.appName}>課堂猜數字</div>
             <div style={st.appSub}>Classroom Experiment</div>
           </div>
-          <div style={st.roundPill}>
+          <div style={{
+            ...st.roundPill,
+            background: state?.status === 'collecting' ? '#dcfce7' : 'var(--accent-light)',
+            border: `1px solid ${state?.status === 'collecting' ? '#bbf7d0' : '#bfdbfe'}`,
+            color: state?.status === 'collecting' ? '#16a34a' : 'var(--accent)',
+          }}>
             {state ? `第 ${state.currentRound} 輪` : '…'}
+            {state?.status === 'collecting' && ' · 收集中'}
           </div>
         </div>
 
-        {state?.revealed && (
-          <div style={{ ...st.banner, background: '#fff7ed', border: '1px solid #fed7aa', color: '#c2410c' }}>
-            ⏸ 本輪已揭曉，請等待下一輪開始
-          </div>
-        )}
+        {renderBanner()}
 
         <div style={st.card}>
           <div style={st.fieldGroup}>
@@ -126,16 +147,12 @@ export default function StudentPage() {
           </div>
 
           <div style={st.fieldGroup}>
-            <label style={st.label}>
-              猜測數字 <span style={st.labelSub}>（0 – 100 整數）</span>
-            </label>
+            <label style={st.label}>猜測數字</label>
             <input
               style={{ ...st.input, fontSize: '26px', background: canSubmit ? '#fff' : 'var(--surface2)' }}
               type="number"
               inputMode="numeric"
-              placeholder="0 ~ 100"
-              min={0}
-              max={100}
+              placeholder="輸入整數"
               value={guess}
               onChange={(e) => setGuess(e.target.value)}
               disabled={!canSubmit}
@@ -143,14 +160,14 @@ export default function StudentPage() {
             />
           </div>
 
-          {status.msg && (
+          {statusMsg.msg && (
             <div style={{
               ...st.statusMsg,
-              background: status.type === 'success' ? 'var(--success-light)' : 'var(--danger-light)',
-              color: status.type === 'success' ? 'var(--success)' : 'var(--danger)',
-              border: `1px solid ${status.type === 'success' ? '#bbf7d0' : '#fecaca'}`,
+              background: statusMsg.type === 'success' ? 'var(--success-light)' : 'var(--danger-light)',
+              color: statusMsg.type === 'success' ? 'var(--success)' : 'var(--danger)',
+              border: `1px solid ${statusMsg.type === 'success' ? '#bbf7d0' : '#fecaca'}`,
             }}>
-              {status.type === 'success' ? '✓ ' : '✗ '}{status.msg}
+              {statusMsg.type === 'success' ? '✓ ' : '✗ '}{statusMsg.msg}
             </div>
           )}
 
@@ -164,7 +181,7 @@ export default function StudentPage() {
             onClick={handleSubmit}
             disabled={!canSubmit}
           >
-            {loading ? '提交中…' : hasSubmittedThisRound ? '✓ 已提交' : '提交猜測'}
+            {loading ? '提交中…' : hasSubmittedThisRound ? '✓ 已提交' : state?.status === 'idle' ? '等待開始' : state?.status === 'revealed' ? '本輪已結束' : '提交猜測'}
           </button>
         </div>
 
@@ -221,13 +238,11 @@ const st: Record<string, React.CSSProperties> = {
   },
   roundPill: {
     fontFamily: 'var(--font-mono)',
-    fontSize: '13px',
-    fontWeight: 500,
-    color: 'var(--accent)',
-    background: 'var(--accent-light)',
-    border: '1px solid #bfdbfe',
-    padding: '5px 14px',
+    fontSize: '12px',
+    fontWeight: 600,
+    padding: '5px 12px',
     borderRadius: '20px',
+    transition: 'all 0.3s',
   },
   banner: {
     padding: '11px 16px',
@@ -255,11 +270,6 @@ const st: Record<string, React.CSSProperties> = {
     fontSize: '13px',
     fontWeight: 600,
     color: 'var(--text)',
-  },
-  labelSub: {
-    fontWeight: 400,
-    color: 'var(--muted)',
-    fontSize: '12px',
   },
   input: {
     border: '1.5px solid var(--border)',

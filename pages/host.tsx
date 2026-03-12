@@ -3,6 +3,8 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, Legend
 
 const HOST_PASSWORD = '5148'
 
+type CollectStatus = 'idle' | 'collecting' | 'revealed'
+
 interface RoundStat {
   round: number
   mean: number
@@ -14,14 +16,16 @@ interface RoundStat {
 
 interface ResultData {
   currentRound: number
+  status: CollectStatus
   revealed: boolean
   roundStats: RoundStat[]
   table: Record<string, string | number>[]
   adjustments: Record<string, string | number>[]
   rounds: number[]
+  currentRoundCount: number
 }
 
-// ── Password gate ────────────────────────────────────────────────────────────
+// ── Password gate ─────────────────────────────────────────────────────────────
 function PasswordGate({ onUnlock }: { onUnlock: () => void }) {
   const [pw, setPw] = useState('')
   const [error, setError] = useState(false)
@@ -55,14 +59,10 @@ function PasswordGate({ onUnlock }: { onUnlock: () => void }) {
             borderRadius: 8, padding: '12px 14px', fontSize: 20,
             fontFamily: 'var(--font-mono)', outline: 'none', width: '100%',
             background: error ? 'var(--danger-light)' : '#fff', color: 'var(--text)',
-            transition: 'border-color 0.15s',
           }}
         />
         {error && <div style={{ color: 'var(--danger)', fontSize: 13, fontWeight: 500 }}>✗ 密碼錯誤</div>}
-        <button
-          onClick={attempt}
-          style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 8, padding: '13px', fontSize: 15, fontWeight: 700, cursor: 'pointer', fontFamily: 'var(--font-body)' }}
-        >
+        <button onClick={attempt} style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 8, padding: '13px', fontSize: 15, fontWeight: 700, cursor: 'pointer', fontFamily: 'var(--font-body)' }}>
           進入
         </button>
         <a href="/" style={{ textAlign: 'center', fontSize: 13, color: 'var(--muted)' }}>← 返回學生頁面</a>
@@ -71,7 +71,7 @@ function PasswordGate({ onUnlock }: { onUnlock: () => void }) {
   )
 }
 
-// ── Stat card ────────────────────────────────────────────────────────────────
+// ── Stat card ─────────────────────────────────────────────────────────────────
 function StatCard({ label, value, unit, color }: { label: string; value: number; unit?: string; color?: string }) {
   return (
     <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: '14px 16px', textAlign: 'center', boxShadow: 'var(--shadow)' }}>
@@ -83,10 +83,23 @@ function StatCard({ label, value, unit, color }: { label: string; value: number;
   )
 }
 
-// ── COLORS ───────────────────────────────────────────────────────────────────
 const ROUND_COLORS = ['#2563eb', '#0891b2', '#7c3aed', '#059669', '#d97706']
 
-// ── Host Page ────────────────────────────────────────────────────────────────
+// ── Status badge ──────────────────────────────────────────────────────────────
+function StatusBadge({ status }: { status: CollectStatus }) {
+  const cfg = {
+    idle: { bg: '#f8fafc', border: '#e2e8f0', color: '#64748b', label: '待機中' },
+    collecting: { bg: '#dcfce7', border: '#bbf7d0', color: '#16a34a', label: '● 收集中' },
+    revealed: { bg: '#fff7ed', border: '#fed7aa', color: '#c2410c', label: '已揭曉' },
+  }[status]
+  return (
+    <span style={{ background: cfg.bg, border: `1px solid ${cfg.border}`, color: cfg.color, padding: '4px 12px', borderRadius: 20, fontSize: 12, fontWeight: 600, fontFamily: 'var(--font-mono)' }}>
+      {cfg.label}
+    </span>
+  )
+}
+
+// ── Host page ─────────────────────────────────────────────────────────────────
 export default function HostPage() {
   const [authed, setAuthed] = useState(false)
   const [data, setData] = useState<ResultData | null>(null)
@@ -123,7 +136,12 @@ export default function HostPage() {
       })
       const d = await res.json()
       if (res.ok) {
-        const msgs: Record<string, string> = { reveal: '✓ 結果已揭曉', next: `✓ 已進入第 ${d.round} 輪`, reset: '✓ 已重置所有資料' }
+        const msgs: Record<string, string> = {
+          start: '✓ 開始收集',
+          reveal: '✓ 已停止收集，結果揭曉',
+          next: `✓ 已進入第 ${d.round} 輪（待機）`,
+          reset: '✓ 已重置所有資料',
+        }
         setActionMsg(msgs[action] || '✓')
         await fetchData()
         setTimeout(() => setActionMsg(''), 3000)
@@ -135,11 +153,37 @@ export default function HostPage() {
 
   if (!authed) return <PasswordGate onUnlock={() => setAuthed(true)} />
 
-  // ── Build side-by-side histogram data ──────────────────────────────────────
-  // Merge all rounds' histogram bins into one dataset for overlay chart
-  function buildOverlayHistogram(): { label: string; [key: string]: number | string }[] {
+  // Control buttons based on current status
+  function renderControls() {
+    if (!data) return null
+    const { status } = data
+    return (
+      <div style={s.controls}>
+        {status === 'idle' && (
+          <button style={{ ...s.btn, background: '#16a34a' }} onClick={() => hostAction('start')} disabled={loading}>
+            ▶ 開始收集
+          </button>
+        )}
+        {status === 'collecting' && (
+          <button style={{ ...s.btn, background: '#d97706' }} onClick={() => hostAction('reveal')} disabled={loading}>
+            ⏹ 停止收集 / 揭曉
+          </button>
+        )}
+        {status === 'revealed' && (
+          <button style={{ ...s.btn, background: '#0891b2' }} onClick={() => hostAction('next')} disabled={loading}>
+            下一輪 →
+          </button>
+        )}
+        <button style={s.btnDanger} onClick={() => { if (confirm('確定重置所有資料？此操作無法還原。')) hostAction('reset') }} disabled={loading}>
+          重置
+        </button>
+      </div>
+    )
+  }
+
+  // Merge all rounds' histograms for overlay chart
+  function buildOverlayHistogram() {
     if (!data || data.roundStats.length === 0) return []
-    // Collect all unique bin labels across rounds
     const allLabels = new Map<string, number>()
     data.roundStats.forEach(rs => {
       rs.histogram.forEach(b => { if (!allLabels.has(b.label)) allLabels.set(b.label, b.min) })
@@ -156,6 +200,7 @@ export default function HostPage() {
   }
 
   const overlayData = buildOverlayHistogram()
+  const showResults = data && (data.status === 'revealed' || data.rounds.some(r => r < data.currentRound))
 
   return (
     <div style={s.page}>
@@ -163,29 +208,14 @@ export default function HostPage() {
 
         {/* Top bar */}
         <div style={s.topBar}>
-          <div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             <div style={s.topLabel}>HOST DASHBOARD</div>
-            {data && (
-              <div style={s.roundInfo}>
-                第 {data.currentRound} 輪 · {data.revealed ? '已揭曉' : '進行中'}
-                {data.table.length > 0 && ` · ${data.table.length} 名學生`}
-              </div>
-            )}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              {data && <div style={s.roundInfo}>第 {data.currentRound} 輪</div>}
+              {data && <StatusBadge status={data.status} />}
+            </div>
           </div>
-          <div style={s.controls}>
-            {!data?.revealed ? (
-              <button style={{ ...s.btnBlue }} onClick={() => hostAction('reveal')} disabled={loading}>
-                揭曉結果
-              </button>
-            ) : (
-              <button style={{ ...s.btnBlue, background: '#0891b2' }} onClick={() => hostAction('next')} disabled={loading}>
-                下一輪 →
-              </button>
-            )}
-            <button style={s.btnDanger} onClick={() => { if (confirm('確定重置所有資料？此操作無法還原。')) hostAction('reset') }} disabled={loading}>
-              重置
-            </button>
-          </div>
+          {renderControls()}
         </div>
 
         {actionMsg && (
@@ -194,17 +224,26 @@ export default function HostPage() {
           </div>
         )}
 
-        {/* Waiting banner */}
-        {!data?.revealed && (
-          <div style={{ background: '#eff6ff', border: '1px solid #bfdbfe', color: '#1d4ed8', padding: '12px 16px', borderRadius: 8, fontSize: 14 }}>
-            ⏳ 等待學生提交中… ({data?.table.length ?? 0} 人已提交)
+        {/* Live count */}
+        {data && (
+          <div style={{
+            background: data.status === 'collecting' ? '#dcfce7' : '#f8fafc',
+            border: `1px solid ${data.status === 'collecting' ? '#bbf7d0' : '#e2e8f0'}`,
+            color: data.status === 'collecting' ? '#15803d' : '#64748b',
+            padding: '12px 16px', borderRadius: 8, fontSize: 14,
+          }}>
+            {data.status === 'collecting'
+              ? `📥 本輪已收到 ${data.currentRoundCount} 份回覆，持續更新中…`
+              : data.status === 'idle'
+              ? '按下「開始收集」後，學生才可以提交猜測'
+              : `本輪共收到 ${data.currentRoundCount} 份回覆`
+            }
           </div>
         )}
 
-        {/* Results section */}
-        {data?.revealed && (
+        {/* Results (show if revealed, or have previous rounds) */}
+        {showResults && (
           <>
-            {/* Tab bar */}
             <div style={s.tabBar}>
               {(['stats', 'table', 'adjust'] as const).map(t => (
                 <button key={t} style={{ ...s.tab, ...(tab === t ? s.tabActive : {}) }} onClick={() => setTab(t)}>
@@ -213,58 +252,43 @@ export default function HostPage() {
               ))}
             </div>
 
-            {/* ── STATS TAB ──────────────────────────────────────────────── */}
+            {/* Stats tab */}
             {tab === 'stats' && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-
-                {/* Per-round stat cards, side by side */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                  {data.roundStats.map((rs, i) => (
-                    <div key={rs.round} style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, padding: '16px 20px', boxShadow: 'var(--shadow)' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
-                        <div style={{ width: 10, height: 10, borderRadius: '50%', background: ROUND_COLORS[i % ROUND_COLORS.length] }} />
-                        <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>第 {rs.round} 輪</div>
-                        <div style={{ fontSize: 12, color: 'var(--muted)', marginLeft: 'auto' }}>{rs.count} 人回覆</div>
-                      </div>
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
-                        <StatCard label="平均值" value={rs.mean} color={ROUND_COLORS[i % ROUND_COLORS.length]} />
-                        <StatCard label="中位數" value={rs.median} color={ROUND_COLORS[i % ROUND_COLORS.length]} />
-                        <StatCard label="標準差" value={rs.std} color={ROUND_COLORS[i % ROUND_COLORS.length]} />
-                      </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                {data!.roundStats
+                  .filter(rs => rs.count > 0)
+                  .map((rs, i) => (
+                  <div key={rs.round} style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, padding: '16px 20px', boxShadow: 'var(--shadow)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+                      <div style={{ width: 10, height: 10, borderRadius: '50%', background: ROUND_COLORS[i % ROUND_COLORS.length] }} />
+                      <div style={{ fontSize: 13, fontWeight: 700 }}>第 {rs.round} 輪</div>
+                      <div style={{ fontSize: 12, color: 'var(--muted)', marginLeft: 'auto' }}>{rs.count} 人回覆</div>
                     </div>
-                  ))}
-                </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
+                      <StatCard label="平均值" value={rs.mean} color={ROUND_COLORS[i % ROUND_COLORS.length]} />
+                      <StatCard label="中位數" value={rs.median} color={ROUND_COLORS[i % ROUND_COLORS.length]} />
+                      <StatCard label="標準差" value={rs.std} color={ROUND_COLORS[i % ROUND_COLORS.length]} />
+                    </div>
+                  </div>
+                ))}
 
-                {/* Overlay histogram — all rounds in one chart */}
                 {overlayData.length > 0 && (
                   <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, padding: '20px', boxShadow: 'var(--shadow)' }}>
-                    <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 16, color: 'var(--text)' }}>
-                      分佈直方圖{data.rounds.length > 1 ? '（各輪並排）' : ''}
+                    <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 16 }}>
+                      分佈直方圖{data!.rounds.length > 1 ? '（各輪並排）' : ''}
                     </div>
                     <ResponsiveContainer width="100%" height={240}>
                       <BarChart data={overlayData} margin={{ top: 4, right: 8, bottom: 36, left: -10 }}>
-                        <XAxis
-                          dataKey="label"
-                          tick={{ fill: '#9ca3af', fontSize: 9, fontFamily: 'DM Mono' }}
-                          angle={-35}
-                          textAnchor="end"
-                          interval={0}
-                        />
+                        <XAxis dataKey="label" tick={{ fill: '#9ca3af', fontSize: 9, fontFamily: 'DM Mono' }} angle={-35} textAnchor="end" interval={0} />
                         <YAxis tick={{ fill: '#9ca3af', fontSize: 11 }} allowDecimals={false} />
                         <Tooltip
                           contentStyle={{ background: '#fff', border: '1px solid #e0ddd5', borderRadius: 8, fontFamily: 'DM Mono', fontSize: 12 }}
-                          formatter={(v: number, name: string) => {
-                            const r = parseInt(name.replace('r', ''))
-                            return [v, `第 ${r} 輪`]
-                          }}
+                          formatter={(v: number, name: string) => [v, `第 ${parseInt(name.replace('r', ''))} 輪`]}
                         />
-                        {data.rounds.length > 1 && (
-                          <Legend
-                            formatter={(value) => `第 ${parseInt(value.replace('r', ''))} 輪`}
-                            wrapperStyle={{ fontSize: 12, fontFamily: 'DM Mono', paddingTop: 8 }}
-                          />
+                        {data!.rounds.length > 1 && (
+                          <Legend formatter={(v) => `第 ${parseInt(v.replace('r', ''))} 輪`} wrapperStyle={{ fontSize: 12, fontFamily: 'DM Mono', paddingTop: 8 }} />
                         )}
-                        {data.rounds.map((r, i) => (
+                        {data!.rounds.map((r, i) => (
                           <Bar key={r} dataKey={`r${r}`} fill={ROUND_COLORS[i % ROUND_COLORS.length]} radius={[3, 3, 0, 0]} />
                         ))}
                       </BarChart>
@@ -274,62 +298,58 @@ export default function HostPage() {
               </div>
             )}
 
-            {/* ── TABLE TAB ──────────────────────────────────────────────── */}
+            {/* Table tab */}
             {tab === 'table' && (
               <div style={s.tableWrapper}>
                 <table style={s.table}>
                   <thead>
                     <tr style={{ background: 'var(--surface2)' }}>
                       <th style={s.th}>學號</th>
-                      {data.rounds.map(r => (
+                      {data!.rounds.map(r => (
                         <th key={r} style={{ ...s.th, color: ROUND_COLORS[(r - 1) % ROUND_COLORS.length] }}>第 {r} 輪</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
-                    {data.table.map((row, i) => (
+                    {data!.table.map((row, i) => (
                       <tr key={i} style={{ background: i % 2 === 0 ? '#fff' : 'var(--surface2)' }}>
-                        <td style={{ ...s.td, fontWeight: 600, color: 'var(--text)' }}>{row.id}</td>
-                        {data.rounds.map(r => (
-                          <td key={r} style={s.td}>{row[`r${r}`]}</td>
-                        ))}
+                        <td style={{ ...s.td, fontWeight: 600 }}>{row.id}</td>
+                        {data!.rounds.map(r => <td key={r} style={s.td}>{row[`r${r}`]}</td>)}
                       </tr>
                     ))}
-                    {data.table.length === 0 && (
-                      <tr><td colSpan={data.rounds.length + 1} style={s.emptyMsg}>尚無資料</td></tr>
+                    {data!.table.length === 0 && (
+                      <tr><td colSpan={data!.rounds.length + 1} style={s.emptyMsg}>尚無資料</td></tr>
                     )}
                   </tbody>
                 </table>
               </div>
             )}
 
-            {/* ── ADJUST TAB ─────────────────────────────────────────────── */}
+            {/* Adjust tab */}
             {tab === 'adjust' && (
               <div style={s.tableWrapper}>
-                {data.rounds.length < 2 ? (
+                {data!.rounds.length < 2 ? (
                   <div style={s.emptyMsg}>需要至少兩輪才能顯示調整幅度</div>
                 ) : (
                   <table style={s.table}>
                     <thead>
                       <tr style={{ background: 'var(--surface2)' }}>
                         <th style={s.th}>學號</th>
-                        {data.rounds.map(r => <th key={r} style={s.th}>第 {r} 輪</th>)}
-                        {data.rounds.slice(1).map(r => (
-                          <th key={`adj${r}`} style={{ ...s.th, fontSize: 11 }}>R{r - 1}→R{r} 調整</th>
+                        {data!.rounds.map(r => <th key={r} style={s.th}>第 {r} 輪</th>)}
+                        {data!.rounds.slice(1).map(r => (
+                          <th key={`adj${r}`} style={{ ...s.th, fontSize: 11 }}>R{r - 1}→R{r}</th>
                         ))}
                       </tr>
                     </thead>
                     <tbody>
-                      {data.adjustments.map((row, i) => (
+                      {data!.adjustments.map((row, i) => (
                         <tr key={i} style={{ background: i % 2 === 0 ? '#fff' : 'var(--surface2)' }}>
                           <td style={{ ...s.td, fontWeight: 600 }}>{row.id}</td>
-                          {/* Round values */}
-                          {data.rounds.map(r => {
-                            const tableRow = data.table.find(t => t.id === row.id)
+                          {data!.rounds.map(r => {
+                            const tableRow = data!.table.find(t => t.id === row.id)
                             return <td key={r} style={{ ...s.td, color: 'var(--muted)' }}>{tableRow ? tableRow[`r${r}`] : '—'}</td>
                           })}
-                          {/* Adjustments */}
-                          {data.rounds.slice(1).map(r => {
+                          {data!.rounds.slice(1).map(r => {
                             const val = row[`adj_${r - 1}_${r}`]
                             const num = typeof val === 'number' ? val : null
                             return (
@@ -366,10 +386,10 @@ const s: Record<string, React.CSSProperties> = {
   page: { minHeight: '100dvh', background: 'var(--bg)', padding: '24px 16px' },
   container: { maxWidth: '760px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '16px' },
   topBar: { display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '16px', flexWrap: 'wrap' as const },
-  topLabel: { fontFamily: 'var(--font-mono)', fontSize: '11px', letterSpacing: '0.12em', color: 'var(--muted)', textTransform: 'uppercase', marginBottom: 4 },
-  roundInfo: { fontSize: '18px', fontWeight: 700, color: 'var(--text)', letterSpacing: '-0.02em' },
-  controls: { display: 'flex', gap: '10px', flexWrap: 'wrap' as const },
-  btnBlue: { background: '#2563eb', color: '#fff', border: 'none', borderRadius: '8px', padding: '10px 20px', fontSize: '14px', fontWeight: 700, cursor: 'pointer', fontFamily: 'var(--font-body)' },
+  topLabel: { fontFamily: 'var(--font-mono)', fontSize: '11px', letterSpacing: '0.12em', color: 'var(--muted)', textTransform: 'uppercase', marginBottom: 2 },
+  roundInfo: { fontSize: '20px', fontWeight: 700, color: 'var(--text)', letterSpacing: '-0.02em' },
+  controls: { display: 'flex', gap: '10px', flexWrap: 'wrap' as const, alignItems: 'center' },
+  btn: { color: '#fff', border: 'none', borderRadius: '8px', padding: '10px 20px', fontSize: '14px', fontWeight: 700, cursor: 'pointer', fontFamily: 'var(--font-body)' },
   btnDanger: { background: 'transparent', color: 'var(--danger)', border: '1px solid #fecaca', borderRadius: '8px', padding: '10px 16px', fontSize: '13px', cursor: 'pointer', fontFamily: 'var(--font-body)' },
   tabBar: { display: 'flex', gap: '4px', background: 'var(--surface)', padding: '4px', borderRadius: '10px', border: '1px solid var(--border)', boxShadow: 'var(--shadow)' },
   tab: { flex: 1, background: 'transparent', border: 'none', color: 'var(--muted)', padding: '9px 8px', borderRadius: '7px', fontSize: '13px', cursor: 'pointer', fontFamily: 'var(--font-body)', fontWeight: 500, whiteSpace: 'nowrap' as const },

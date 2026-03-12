@@ -1,7 +1,6 @@
-import fs from 'fs'
-import path from 'path'
+import { kv } from '@vercel/kv'
 
-const DATA_FILE = path.join('/tmp', 'classroom-data.json')
+const STATE_KEY = 'classroom:state'
 
 export interface Guess {
   studentId: string
@@ -10,30 +9,31 @@ export interface Guess {
   timestamp: number
 }
 
+export type CollectStatus = 'idle' | 'collecting' | 'revealed'
+
 export interface GameState {
   currentRound: number
-  revealed: boolean
+  // idle = 尚未開始本輪, collecting = 收集中, revealed = 已揭曉
+  status: CollectStatus
   guesses: Guess[]
 }
 
 const DEFAULT_STATE: GameState = {
   currentRound: 1,
-  revealed: false,
+  status: 'idle',
   guesses: [],
 }
 
-export function readState(): GameState {
+export async function readState(): Promise<GameState> {
   try {
-    if (fs.existsSync(DATA_FILE)) {
-      const raw = fs.readFileSync(DATA_FILE, 'utf-8')
-      return JSON.parse(raw)
-    }
+    const data = await kv.get<GameState>(STATE_KEY)
+    if (data) return data
   } catch {}
   return { ...DEFAULT_STATE }
 }
 
-export function writeState(state: GameState): void {
-  fs.writeFileSync(DATA_FILE, JSON.stringify(state, null, 2))
+export async function writeState(state: GameState): Promise<void> {
+  await kv.set(STATE_KEY, state)
 }
 
 export function getStats(values: number[]) {
