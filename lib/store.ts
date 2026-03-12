@@ -5,9 +5,7 @@ let client: Redis | null = null
 function getClient(): Redis {
   if (!client) {
     const url = process.env.REDIS_URL!
-    // Redis Cloud 有時用 redis:// 但實際需要 TLS，強制加上
     client = new Redis(url, {
-      tls: {},
       maxRetriesPerRequest: 3,
     })
     client.on('error', (err) => {
