@@ -2,39 +2,49 @@
 
 課堂猜數字實驗應用。
 
-## 部署到 Vercel（必須設定 KV）
+---
 
-### 步驟一：建立 Vercel KV 資料庫
+## 部署步驟
 
-1. 登入 [vercel.com](https://vercel.com) → 進入你的專案
-2. 點選上方 **Storage** 分頁
-3. 點 **Create Database** → 選 **KV**
-4. 命名（例如 `classroom-kv`）→ 建立
-5. 建立後點 **.env.local** 分頁，複製以下三個環境變數：
-   - `KV_URL`
-   - `KV_REST_API_URL`
-   - `KV_REST_API_TOKEN`
+### 步驟一：建立免費 Upstash Redis 資料庫
 
-### 步驟二：加入環境變數
+1. 前往 [console.upstash.com](https://console.upstash.com) 註冊／登入（免費）
+2. 點 **Create Database**
+3. 名稱隨意（例如 `classroom`），地區選 **Global** 或 **ap-northeast-1（東京）**
+4. 建立後，在資料庫頁面找到 **REST API** 區塊
+5. 複製以下兩個值：
+   - `UPSTASH_REDIS_REST_URL`（以 `https://` 開頭）
+   - `UPSTASH_REDIS_REST_TOKEN`
 
-在 Vercel 專案 → **Settings** → **Environment Variables**，
-把上面三個變數貼入，套用到 Production / Preview / Development。
+### 步驟二：在 Vercel 加入環境變數
+
+1. Vercel 專案 → **Settings** → **Environment Variables**
+2. 新增兩筆（套用到 Production / Preview / Development）：
+
+| 名稱 | 值 |
+|------|-----|
+| `UPSTASH_REDIS_REST_URL` | 從 Upstash 複製的 URL |
+| `UPSTASH_REDIS_REST_TOKEN` | 從 Upstash 複製的 Token |
 
 ### 步驟三：重新部署
 
-推送任意 commit 觸發重新部署，或在 Vercel 點 **Redeploy**。
+推送 commit 或在 Vercel 點 **Redeploy**。
 
 ---
 
-## 流程說明
+## 課堂流程
 
 | 狀態 | 學生頁面 | 主持人操作 |
 |------|----------|-----------|
-| idle（待機） | 無法提交，顯示「等待開始」 | 按「開始收集」 |
-| collecting（收集中） | 可輸入並提交猜測 | 按「停止收集 / 揭曉」 |
+| idle（待機） | 顯示「等待開始」，無法提交 | 按「▶ 開始收集」 |
+| collecting（收集中） | 可輸入並提交猜測 | 按「⏹ 停止收集 / 揭曉」 |
 | revealed（已揭曉） | 顯示「本輪已結束」 | 看結果，按「下一輪」 |
 
 ## 頁面
 
 - `/` — 學生頁面
 - `/host` — 主持人（密碼：5148）
+
+## 免費方案限制
+
+Upstash 免費方案：每月 500,000 次指令，課堂使用完全足夠。

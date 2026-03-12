@@ -1,4 +1,22 @@
-import { kv } from '@vercel/kv'
+import Redis from 'ioredis'
+
+let client: Redis | null = null
+
+function getClient(): Redis {
+  if (!client) {
+    const url = process.env.REDIS_URL!
+    // Redis Cloud 有時用 redis:// 但實際需要 TLS，強制加上
+    client = new Redis(url, {
+      tls: {},
+      maxRetriesPerRequest: 3,
+    })
+    client.on('error', (err) => {
+      console.error('Redis error:', err)
+      client = null
+    })
+  }
+  return client
+}
 
 const STATE_KEY = 'classroom:state'
 
@@ -13,7 +31,6 @@ export type CollectStatus = 'idle' | 'collecting' | 'revealed'
 
 export interface GameState {
   currentRound: number
-  // idle = 尚未開始本輪, collecting = 收集中, revealed = 已揭曉
   status: CollectStatus
   guesses: Guess[]
 }
@@ -26,14 +43,22 @@ const DEFAULT_STATE: GameState = {
 
 export async function readState(): Promise<GameState> {
   try {
-    const data = await kv.get<GameState>(STATE_KEY)
-    if (data) return data
-  } catch {}
-  return { ...DEFAULT_STATE }
+    const raw = await getClient().get(STATE_KEY)
+    if (raw) return JSON.parse(raw) as GameState
+  } catch (e) {
+    console.error('Redis read error:', e)
+    client = null
+  }
+  return { ...DEFAULT_STATE, guesses: [] }
 }
 
 export async function writeState(state: GameState): Promise<void> {
-  await kv.set(STATE_KEY, state)
+  try {
+    await getClient().set(STATE_KEY, JSON.stringify(state))
+  } catch (e) {
+    console.error('Redis write error:', e)
+    client = null
+  }
 }
 
 export function getStats(values: number[]) {
